@@ -1,20 +1,27 @@
 import argparse, sys, os, torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms, utils 
-from torchvision.datasets import ImageNet
+from torchvision import datasets, transforms, utils
 from tqdm import tqdm
 from models.vqvae import FlatVQVAE
-# from scheduler import CycleScheduler
-from torch.utils.tensorboard import SummaryWriter
+import distributed as dist
 import neptune.new as neptune
 from torch.optim.lr_scheduler import CyclicLR
+import util
 
+os.nice(19)
 
-os. nice (19)
+run = neptune.init_run(
+    project="your-neptune-project-id",  # TODO enter a neptune project id to train model
+    capture_stdout=False,
+    capture_stderr=False,
+)
 
 
 def train(epoch, loader, model, optimizer, scheduler, device):
+    if dist.is_primary():
+        loader = tqdm(loader)
+
     criterion = nn.MSELoss()
 
     latent_loss_weight = 0.35
@@ -60,13 +67,12 @@ def train(epoch, loader, model, optimizer, scheduler, device):
             run["train/latent"].log(latent_loss.item())
             run["train/epoch"].log(epoch + 1)
             run["train/num_used_codebooks"].log(codebook_usage)
-            
 
             if i % 9000 == 0:
                 model.eval()
                 sample = img[:sample_size]
                 with torch.no_grad():
-                    out, _ ,_,_= model(sample)
+                    out, _, _, _ = model(sample)
                 utils.save_image(
                     torch.cat([sample, out], 0),
                     f"image/sample/flat_vqvae_80x80codebook_{str(epoch + 1).zfill(5)}_{str(i).zfill(5)}.png",
@@ -76,6 +82,7 @@ def train(epoch, loader, model, optimizer, scheduler, device):
                 )
                 model.train()
 
+
 def main(args):
     torch.cuda.set_device(3)  # Use GPU 1 (if desired)
     torch.cuda.empty_cache()
@@ -84,13 +91,13 @@ def main(args):
 
     transform = transforms.Compose(
         [
-            transforms.Resize((80,80)),
+            transforms.Resize((80, 80)),
             transforms.ToTensor(),
             transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
         ]
     )
 
-    dataset = datasets.ImageFolder("/local/reyhasjb/datasets/Imagenet-100class/train",transform=transform)
+    dataset = datasets.ImageFolder(util.IMG_NET_TRAIN, transform=transform)
     data_loader = DataLoader(dataset, batch_size=256 // args.n_gpu, shuffle=True, num_workers=12)
     print(len(dataset))
     print(len(dataset.classes))
@@ -98,7 +105,6 @@ def main(args):
     print(dataset[0][0].shape)
 
     model = FlatVQVAE().to(device)
-
 
     if args.distributed:
         model = nn.parallel.DistributedDataParallel(
@@ -112,43 +118,31 @@ def main(args):
     scheduler = None
     if args.sched == "cycle":
         scheduler = CyclicLR(
-        optimizer, 
-        base_lr=args.lr * 0.1, 
-        max_lr=args.lr, 
-        step_size_up=len(loader) * args.epoch * 0.05, 
-        mode="triangular",
-        cycle_momentum=False)
-    x=0
+            optimizer,
+            base_lr=args.lr * 0.1,
+            max_lr=args.lr,
+            step_size_up=len(data_loader) * args.epoch * 0.05,
+            mode="triangular",
+            cycle_momentum=False)
+    x = 0
     for i in range(args.epoch):
         train(i, data_loader, model, optimizer, scheduler, device)
-        x=i
+        x = i
         if dist.is_primary():
-            model_path = os.path.join(args.save_path_models, f"model_epoch{i+1}_flat_vqvae80x80_144x456codebook.pth")
+            model_path = os.path.join(args.save_path_models, f"model_epoch{i + 1}_flat_vqvae80x80_144x456codebook.pth")
             torch.save(model.state_dict(), model_path)
 
-        
-    
 
 if __name__ == "__main__":
-    
     parser = argparse.ArgumentParser()
     parser.add_argument("--n_gpu", type=int, default=1)
 
-    port = (
-        2 ** 15
-        + 2 ** 14
-        + hash(os.getuid() if sys.platform != "win32" else 1) % 2 ** 14
-    )
+    port = (2 ** 15 + 2 ** 14 + hash(os.getuid() if sys.platform != "win32" else 1) % 2 ** 14)
     parser.add_argument("--dist_url", default=f"tcp://127.0.0.1:{port}")
-    parser.add_argument("--save_path_models", default="/home/abghamtm/work/masking_comparison/checkpoint/vqvae/")
-    parser.add_argument("--save_path_imgs", default="/home/abghamtm/work/masking_comparison/image/100class-vqvae-reconstruction/")
     parser.add_argument("--size", type=int, default=80)
     parser.add_argument("--epoch", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--sched", type=str)
-    # parser.add_argument('--ckpt_vqvae', type=str, default="checkpoint/flat_vqvae_80x80_144x456codebook_100class_051.pt")
-
-    # parser.add_argument("path", type=str)
 
     args = parser.parse_args()
 

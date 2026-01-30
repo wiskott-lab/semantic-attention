@@ -1,10 +1,9 @@
 import argparse, os
 import util
-from archive.mask_reconstruct_img_batched import denormalize
-from mask_reconstruct_img import DATA_DIR
 import torch
 import torch.nn.functional as F
 
+# run script to generate evaluate masking strategies on trained transformer
 
 def save_files(ce_over_batches, acc_over_batches, mse_over_batches, code_ce_over_batches, code_ce_over_batches_m, code_acc_over_batches, code_acc_over_batches_m, n_inputs, file_name):
     ces = torch.sum(torch.tensor(ce_over_batches), dim=0) / n_inputs
@@ -15,13 +14,13 @@ def save_files(ce_over_batches, acc_over_batches, mse_over_batches, code_ce_over
     code_ces_m = torch.sum(torch.tensor(code_ce_over_batches_m), dim=0) / n_inputs
     code_accs_m = torch.sum(torch.tensor(code_acc_over_batches_m), dim=0) / n_inputs
 
-    torch.save(accs, DATA_DIR / 'mask_ratio_eval' / f'{file_name}_acc.pt')
-    torch.save(ces, DATA_DIR / 'mask_ratio_eval' / f'{file_name}_ce.pt')
-    torch.save(code_accs, DATA_DIR / 'mask_ratio_eval' / f'{file_name}_code_acc.pt')
-    torch.save(code_ces, DATA_DIR / 'mask_ratio_eval' / f'{file_name}_code_ce.pt')
-    torch.save(code_accs_m, DATA_DIR / 'mask_ratio_eval' / f'{file_name}_code_acc_m.pt')
-    torch.save(code_ces_m, DATA_DIR / 'mask_ratio_eval' / f'{file_name}_code_ce_m.pt')
-    torch.save(mses, DATA_DIR / 'mask_ratio_eval' / f'{file_name}_mse.pt')
+    torch.save(accs, util.DATA_DIR / 'mask_ratio_eval' / f'{file_name}_acc.pt')
+    torch.save(ces, util.DATA_DIR / 'mask_ratio_eval' / f'{file_name}_ce.pt')
+    torch.save(code_accs, util.DATA_DIR / 'mask_ratio_eval' / f'{file_name}_code_acc.pt')
+    torch.save(code_ces, util.DATA_DIR / 'mask_ratio_eval' / f'{file_name}_code_ce.pt')
+    torch.save(code_accs_m, util.DATA_DIR / 'mask_ratio_eval' / f'{file_name}_code_acc_m.pt')
+    torch.save(code_ces_m, util.DATA_DIR / 'mask_ratio_eval' / f'{file_name}_code_ce_m.pt')
+    torch.save(mses, util.DATA_DIR / 'mask_ratio_eval' / f'{file_name}_mse.pt')
 
 
 @torch.no_grad()
@@ -54,7 +53,7 @@ def random_attn_eval(dataloader, vqvae, transformer, classifier, step_size=1, fi
 
             recons_from_max_indices = vqvae.decode_code(index_masked.reshape(-1, 20, 20).to(util.DEVICE))
             class_logits = classifier(util.preprocess(util.denormalize(recons_from_max_indices)))
-            recon_errors_over_tokens.append(F.mse_loss(denormalize(recons_from_max_indices),denormalize(vqvae_out)).item())
+            recon_errors_over_tokens.append(F.mse_loss(util.denormalize(recons_from_max_indices), util.denormalize(vqvae_out)).item())
             ce_over_tokens.append(F.cross_entropy(input=class_logits, target=label).item())
             acc_over_tokens.append(util.accuracy(logits=class_logits, target=label).item())
 
@@ -111,7 +110,7 @@ def add_attn_eval(dataloader, vqvae, transformer, classifier, step_size=1, file_
             code_acc_over_tokens_m.append(util.calc_acc(logits[rows, cur_pos_to_mask], index_repr_batch[rows, cur_pos_to_mask]))
 
             class_logits = classifier(util.preprocess(util.denormalize(recons_from_max_indices)))
-            recon_errors_over_tokens.append(F.mse_loss(denormalize(recons_from_max_indices), denormalize(vqvae_out)).item())
+            recon_errors_over_tokens.append(F.mse_loss(util.denormalize(recons_from_max_indices), util.denormalize(vqvae_out)).item())
             ce_over_tokens.append(F.cross_entropy(input=class_logits, target=label).item())
             acc_over_tokens.append(util.accuracy(logits=class_logits, target=label).item())
 
@@ -160,7 +159,7 @@ def sel_attn_eval(dataloader, vqvae, transformer, classifier, step_size=1, file_
             recons_from_max_indices = vqvae.decode_code(index_b.reshape(-1, 20, 20).to(util.DEVICE))  # bx20x20 -> bx3x80x80
             # replace indices at masked positions with most likely indices
             class_logits = classifier(util.preprocess(util.denormalize(recons_from_max_indices)))
-            recon_errors_over_tokens.append(F.mse_loss(denormalize(recons_from_max_indices), denormalize(vqvae_out)).item())
+            recon_errors_over_tokens.append(F.mse_loss(util.denormalize(recons_from_max_indices), util.denormalize(vqvae_out)).item())
             ce_over_tokens.append(F.cross_entropy(input=class_logits, target=label).item())
             acc_over_tokens.append(util.accuracy(logits=class_logits, target=label).item())
 
@@ -199,14 +198,9 @@ if __name__ == "__main__":
         else:
             DEVICE = 'cpu'
 
-        util.set_seed(0)
         val_dataloader = util.load_val_data(args.batch_size)
         vqvae, transformer, classifier = util.model_setup(init_from=args.trans_id)
 
-
-
-        #
-        # for run_id in ['selective_transformer', 'random_transformer', 'VQVAET-521', 'VQVAET-522']:
         if args.masking_strategy == 'random':
             random_attn_eval(transformer=transformer, classifier=classifier, vqvae=vqvae, dataloader=val_dataloader,
                              step_size=1, file_name=f'{args.trans_id}_rnd')
@@ -227,15 +221,3 @@ if __name__ == "__main__":
             raise NameError(f"Unknown masking strategy {args.masking_strategy}")
 
 
-
-        # transformer = util.transformer_setup(util.TRANSFORMER_SEL_M_WEIGHTS)
-
-        # masking - transformer
-        # random_attn_eval(transformer=transfo  rmer, classifier=classifier, vqvae=vqvae, dataloader=val_dataloader,
-        #                  step_size=1, file_name='rnd_sel')
-
-        # add_attn_eval(transformer=transformer, classifier=classifier, vqvae=vqvae, dataloader=val_dataloader,
-        #               step_size=1, file_name='add_sel')
-        #
-        # sel_attn_eval(transformer=transformer, classifier=classifier, vqvae=vqvae, dataloader=val_dataloader,
-        #               step_size=1, file_name='sel_sel')

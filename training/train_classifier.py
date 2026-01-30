@@ -1,22 +1,10 @@
 import argparse
-from sched import scheduler
-import sys
 import os
-import numpy as np
 import torch
-from torch import nn, optim
-from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
-from transformers import DistilBertForMaskedLM, DistilBertConfig
 import neptune.new as neptune
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms, utils
-from pathlib import Path
-import socket
+from torchvision import datasets, transforms
 import util
-
-from models.vqvae import FlatVQVAE
-from torchvision.models import resnet50, ResNet50_Weights
 from torch.functional import F
 
 
@@ -44,8 +32,6 @@ def eval_model(model_vqvae, dataloader, run, classifier):
     return sum_ce
 
 
-
-# Define classifier and load saved model(weights)
 if __name__ == '__main__':
     os.nice(10)  # Adjusts the process priority by +10
     parser = argparse.ArgumentParser()

@@ -1,19 +1,9 @@
 import argparse
-from sched import scheduler
-import sys
 import os
-import numpy as np
 import torch
-from torch import nn, optim
-from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
-from transformers import DistilBertForMaskedLM, DistilBertConfig
 import neptune.new as neptune
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms, utils
-from pathlib import Path
-import socket
-from models.vqvae import FlatVQVAE
+from torchvision import datasets, transforms
 from torch.functional import F
 import util
 
@@ -128,7 +118,6 @@ if __name__ == '__main__':
     parser.add_argument("--init_from", "-i", help='init_from', type=str, default=None)
 
 
-
     args = parser.parse_args()
     if torch.cuda.is_available():
         DEVICE = 'cuda'
@@ -167,9 +156,8 @@ if __name__ == '__main__':
     val_dataloader = DataLoader(dataset_val, batch_size=bs, shuffle=True)
 
     model_vqvae = util.vqvae_setup()
-    model_distil = util.transformer_setup(weight_path=None, init_from=args.init_from)
+    model_distil = util.transformer_setup(init_from=args.init_from)
     classifier = util.classifier_setup(pretrained=True)
-
 
     optimizer = torch.optim.AdamW(model_distil.parameters(), lr=lr)
     best_eval_loss = eval_model(model_distil=model_distil, model_vqvae=model_vqvae, dataloader=val_dataloader, run=run,

@@ -1,12 +1,10 @@
-
 from torch import nn
 from transformers import DistilBertForMaskedLM, DistilBertConfig
 from pathlib import Path
-import socket
 
 from torchvision.models import resnet50, ResNet50_Weights
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader
 import random
 from models.vqvae import FlatVQVAE
 import numpy as np
@@ -15,22 +13,25 @@ import torch
 DATA_DIR = Path(__file__).parent / 'data'
 RUNS_DIR = DATA_DIR / 'runs'
 
-VQVAE_WEIGHTS = DATA_DIR / RUNS_DIR  / 'vqvae' / 'model_epoch80_flat_vqvae80x80_144x456codebook.pth'
+VQVAE_WEIGHTS = DATA_DIR / RUNS_DIR / 'vqvae' / 'model_epoch80_flat_vqvae80x80_144x456codebook.pth'
 CLASSIFIER_WEIGHTS = DATA_DIR / RUNS_DIR / 'classifier' / 'model_st.pt'
 
-TRANSFORMER_SEL_M_WEIGHTS = DATA_DIR / RUNS_DIR / 'VQVAET-491' / 'model_st.pt'
-TRANSFORMER_SEL_WEIGHTS = DATA_DIR / RUNS_DIR / 'VQVAET-492' / 'model_st.pt'
-TRANSFORMER_RND_M_WEIGHTS = DATA_DIR / RUNS_DIR / 'VQVAET-489' / 'model_st.pt'
-TRANSFORMER_RND_WEIGHTS = DATA_DIR / RUNS_DIR / 'VQVAET-488' / 'model_st.pt'
-
+SELECTIVE_TRANSFORMER_WEIGHTS = DATA_DIR / RUNS_DIR / 'selective_transformer' / 'model_st.pt'
+RANDOM_TRANSFORMER_WEIGHTS = DATA_DIR / RUNS_DIR / 'random_transformer' / 'model_st.pt'
 
 preprocess = ResNet50_Weights.IMAGENET1K_V2.transforms()
 
-HOSTNAME = socket.gethostname()
+if torch.cuda.is_available():
+    DEVICE = 'cuda'
+else:
+    DEVICE = 'cpu'
+
+# TODO Fill in your imagenet-path, note, we reduced imagenet to classes
+IMG_NET_TRAIN = '/your/path/to/Imagenet-100class/train'
+IMG_NET_VAL = '/your/path/to/Imagenet-100class/val'
 
 
-
-def accuracy_no_red(logits, target):
+def accuracy_no_reduction(logits, target):
     pred = logits.argmax(dim=1, keepdim=True)
     e = pred.eq(target.view_as(pred))
     return e
@@ -46,35 +47,6 @@ def accuracy(logits, target):
     pred = logits.argmax(dim=1, keepdim=True)
     e = pred.eq(target.view_as(pred)).sum() / target.shape[0]
     return e
-
-
-def set_border(ax, correctly_classified, no_color=False):
-    for spine in ax.spines.values():
-        color = 'green' if correctly_classified else 'red'
-        if no_color:
-            color = 'black'
-        spine.set_edgecolor(color)
-        spine.set_linewidth(4)
-
-    ax.set_xticks([])
-    ax.set_yticks([])
-
-
-if HOSTNAME == 'gpu03':
-    IMG_NET_TRAIN = '/local/reyhasjb/datasets/Imagenet-100class/train'
-    IMG_NET_VAL = '/local/reyhasjb/datasets/Imagenet-100class/val'
-elif HOSTNAME in {'gpu01', 'gpu02', 'tesla'}:
-    IMG_NET_TRAIN = '/local/rathjjgf/datasets/Imagenet-100class/train'
-    IMG_NET_VAL = '/local/rathjjgf/datasets/Imagenet-100class/val'
-else:
-    IMG_NET_TRAIN = '/Users/rathjjgf/datasets/Imagenet-100class/val'  # for debugging only
-    IMG_NET_VAL = '/Users/rathjjgf/datasets/Imagenet-100class/val'
-
-
-if torch.cuda.is_available():
-    DEVICE = 'cuda'
-else:
-    DEVICE = 'cpu'
 
 
 def set_cuda_device(cuda_device):
@@ -123,12 +95,12 @@ def vqvae_setup():
     model_vqvae = model_vqvae.to(DEVICE).eval()
     return model_vqvae
 
-def transformer_setup(weight_path=None, init_from=None):
-    cfg = DistilBertConfig(vocab_size=456, hidden_size=144, sinusoidal_pos_embds=False, n_layers=6, n_heads=4, max_position_embeddings=400)
+
+def transformer_setup(init_from=None):
+    cfg = DistilBertConfig(vocab_size=456, hidden_size=144, sinusoidal_pos_embds=False, n_layers=6, n_heads=4,
+                           max_position_embeddings=400)
     model_distil = DistilBertForMaskedLM(cfg).to(DEVICE)
-    if weight_path is not None:
-        model_distil.load_state_dict(torch.load(weight_path, map_location=DEVICE))
-    elif init_from is not None:
+    if init_from is not None:
         model_distil.load_state_dict(torch.load(RUNS_DIR / init_from / 'model_st.pt', map_location=DEVICE))
     model_distil = model_distil.to(DEVICE).eval()
     model_distil.eval()
@@ -139,14 +111,15 @@ def classifier_setup(pretrained=True):
     classifier = resnet50(pretrained=False)
     classifier.fc = nn.Linear(2048, 100)
     if pretrained:
-        classifier.load_state_dict(torch.load(CLASSIFIER_WEIGHTS, map_location=torch.device(DEVICE), weights_only=False)())
+        classifier.load_state_dict(
+            torch.load(CLASSIFIER_WEIGHTS, map_location=torch.device(DEVICE), weights_only=False)())
     classifier.to(DEVICE).eval()
     return classifier
 
 
-def model_setup(transformer_path=None, init_from=None):
+def model_setup(init_from=None):
     vqvae = vqvae_setup()
-    transformer = transformer_setup(transformer_path, init_from)
+    transformer = transformer_setup(init_from)
     classifier = classifier_setup()
     return vqvae, transformer, classifier
 
@@ -158,11 +131,25 @@ def load_val_data(bs):
     val_dataloader = DataLoader(dataset_val, batch_size=bs, shuffle=True)
     return val_dataloader
 
+
+# plot utils
+def set_border(ax, correctly_classified, no_color=False):
+    for spine in ax.spines.values():
+        color = 'green' if correctly_classified else 'red'
+        if no_color:
+            color = 'black'
+        spine.set_edgecolor(color)
+        spine.set_linewidth(4)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+
 def hide_extras(ax):
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
+
 
 def hide_all_extras(axs):
     for row_id in range(axs.shape[0]):
